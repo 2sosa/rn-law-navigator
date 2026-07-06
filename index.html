@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>放射線・核物質 規制経路ナビゲーター v0.2</title>
+<style>
+  /* ============================================================
+     設計方針
+     - タイポグラフィ主導・囲み枠なし（左罫線と余白で階層を表現）
+     - BIZ UDゴシック（Windows標準搭載・オフライン動作）
+     - 状態は色のみで区別しない（ラベル文字＋線種で併記）
+     - デジタル庁ダッシュボード実践ガイドブック準拠:
+       データ基準日の明記／比較指標（検証率）／装飾排除
+     ============================================================ */
+  :root{
+    --bg:#F7F5F0;        /* 生成り */
+    --ink:#26241F;       /* 墨 */
+    --sub:#77726A;       /* 灰 */
+    --line:#E3DED4;      /* 罫 */
+    --ai:#2D4F6B;        /* 藍＝該当・主要 */
+    --amber:#9A6A1F;     /* 琥珀＝未検証 */
+    --green:#3D6B50;     /* 松葉＝検証済み */
+    --dim:#B7B1A6;       /* 拡張予定・非活性 */
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:"BIZ UDGothic","BIZ UDゴシック","Yu Gothic UI","Meiryo",sans-serif;
+    background:var(--bg); color:var(--ink);
+    line-height:1.85; font-size:15px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:48px 24px 96px;}
+  @media(max-width:600px){.wrap{padding:32px 16px 72px;}}
+
+  /* ---------- 見出し・ラベル ---------- */
+  .eyebrow{
+    font-size:11px;letter-spacing:.22em;color:var(--sub);
+    text-transform:uppercase;margin-bottom:6px;
+  }
+  h1{font-size:26px;font-weight:700;letter-spacing:.04em;line-height:1.5;}
+  .lede{color:var(--sub);font-size:13.5px;margin-top:10px;max-width:40em;}
+  h2{
+    font-size:17px;font-weight:700;letter-spacing:.06em;
+    border-left:3px solid var(--ai);padding-left:14px;
+    margin:56px 0 6px;
+  }
+  h2 .num{color:var(--sub);font-weight:400;font-size:13px;margin-right:8px;}
+  .h2sub{color:var(--sub);font-size:12.5px;padding-left:17px;margin-bottom:20px;}
+
+  /* ---------- メタ帯（基準日・検証率） ---------- */
+  .meta{
+    display:flex;flex-wrap:wrap;gap:24px;align-items:baseline;
+    border-top:1px solid var(--ink);border-bottom:1px solid var(--line);
+    padding:12px 0;margin-top:28px;font-size:12.5px;
+  }
+  .meta dt{color:var(--sub);letter-spacing:.1em;font-size:11px;}
+  .meta dd{font-weight:700;font-size:14px;}
+  .vbar{position:relative;width:120px;height:2px;background:var(--line);margin-top:6px;}
+  .vbar i{position:absolute;left:0;top:0;height:2px;background:var(--green);}
+
+  /* ---------- 選択チップ ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:10px 8px;margin:14px 0 4px;}
+  .chip{
+    font-family:inherit;font-size:13.5px;line-height:1.4;
+    padding:9px 14px;background:transparent;color:var(--ink);
+    border:1px solid var(--line);border-radius:3px;cursor:pointer;
+    transition:border-color .15s,background .15s,color .15s;
+  }
+  .chip small{display:block;font-size:10.5px;color:var(--sub);letter-spacing:.04em;}
+  .chip:hover{border-color:var(--ai);}
+  .chip[aria-pressed="true"]{
+    background:var(--ai);color:#fff;border-color:var(--ai);
+  }
+  .chip[aria-pressed="true"] small{color:#CBD8E3;}
+  .chip:focus-visible{outline:2px solid var(--ai);outline-offset:2px;}
+
+  /* ---------- 結果 ---------- */
+  #resultArea{margin-top:8px;}
+  .placeholder{color:var(--sub);font-size:13.5px;padding:28px 0;border-top:1px dashed var(--line);}
+  .layerTitle{
+    font-size:12px;letter-spacing:.2em;color:var(--sub);
+    margin:36px 0 4px;
+  }
+  .law{
+    border-left:3px solid var(--ai);
+    padding:4px 0 4px 18px;margin:26px 0;
+  }
+  .law.cond{border-left-color:var(--sub);}
+  .law.future{border-left-color:var(--dim);color:var(--sub);}
+  .law.cross-off{border-left-color:var(--line);color:var(--sub);}
+  .lawHead{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline;}
+  .lawName{font-size:16.5px;font-weight:700;letter-spacing:.03em;}
+  .kind{font-size:11px;letter-spacing:.14em;color:var(--sub);}
+  .kind.hit{color:var(--ai);font-weight:700;}
+  .articles{font-size:13.5px;margin-top:4px;}
+  .articles b{font-weight:700;}
+
+  /* 委任経路（本ツールの主役） */
+  .path{margin:14px 0 6px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:2px 0;}
+  .pnode{display:inline-flex;flex-direction:column;padding:0 2px;}
+  .ptier{font-size:9.5px;letter-spacing:.24em;color:var(--sub);margin-bottom:1px;}
+  .pref{font-size:13px;font-weight:700;border-bottom:1px solid var(--ink);padding-bottom:2px;}
+  .parrow{color:var(--sub);padding:0 8px 3px;font-size:12px;align-self:flex-end;}
+
+  .kv{font-size:12.5px;color:var(--sub);margin-top:8px;}
+  .kv b{color:var(--ink);font-weight:700;}
+  .memo{font-size:13px;margin-top:6px;}
+  .trigger{font-size:12.5px;margin-top:2px;}
+  .trigger em{font-style:normal;font-weight:700;border-bottom:1px dotted var(--ink);}
+
+  .status{
+    display:inline-block;margin-top:10px;font-size:11px;letter-spacing:.14em;
+    padding:2px 0;color:var(--amber);border-bottom:2px dashed var(--amber);
+  }
+  .status.ok{color:var(--green);border-bottom:2px solid var(--green);}
+  .status .d{color:var(--sub);letter-spacing:.02em;margin-left:8px;}
+
+  /* 除外理由 */
+  .excl{margin-top:32px;border-top:1px solid var(--line);padding-top:14px;}
+  .excl h4{font-size:12px;letter-spacing:.18em;color:var(--sub);font-weight:400;margin-bottom:8px;}
+  .excl li{list-style:none;font-size:13px;margin:6px 0;padding-left:16px;text-indent:-16px;}
+  .excl li::before{content:"— ";color:var(--sub);}
+  .excl b{font-weight:700;}
+
+  /* ---------- 俯瞰マトリクス ---------- */
+  .tableWrap{overflow-x:auto;margin-top:16px;}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:12px;}
+  th,td{border:1px solid var(--line);padding:8px 6px;text-align:center;vertical-align:middle;}
+  th{font-weight:700;background:transparent;font-size:11.5px;letter-spacing:.04em;}
+  th.rowh{text-align:left;padding-left:10px;min-width:9.5em;}
+  td{cursor:pointer;transition:background .15s;}
+  td:hover{background:#EFEAE0;}
+  td .abbr{font-weight:700;letter-spacing:.06em;}
+  td .cnt{display:block;font-size:10px;color:var(--sub);}
+  td.t1{background:#F1EEE6;} td.t2{background:#E7E9E6;} td.t3{background:#DCE3E4;}
+  td.tf{color:var(--dim);}
+  td.sel{outline:2px solid var(--ai);outline-offset:-2px;}
+  .legend{font-size:11.5px;color:var(--sub);margin-top:10px;}
+
+  /* ---------- メモ・プロンプト ---------- */
+  textarea{
+    width:100%;min-height:340px;margin-top:14px;
+    font-family:"BIZ UDGothic","Yu Gothic UI",monospace,sans-serif;
+    font-size:12.5px;line-height:1.8;color:var(--ink);
+    background:transparent;border:1px solid var(--line);border-radius:3px;
+    padding:16px;resize:vertical;
+  }
+  textarea:focus-visible{outline:2px solid var(--ai);outline-offset:2px;}
+  .btnrow{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;}
+  .btn{
+    font-family:inherit;font-size:13px;letter-spacing:.06em;
+    padding:10px 22px;cursor:pointer;border-radius:3px;
+    border:1px solid var(--ai);background:var(--ai);color:#fff;
+    transition:opacity .15s;
+  }
+  .btn:hover{opacity:.85;}
+  .btn.ghost{background:transparent;color:var(--ai);}
+  .btn:focus-visible{outline:2px solid var(--ai);outline-offset:2px;}
+  .copied{font-size:12px;color:var(--green);align-self:center;}
+
+  details{margin-top:44px;border-top:1px solid var(--line);padding-top:18px;}
+  summary{
+    cursor:pointer;font-size:14px;font-weight:700;letter-spacing:.05em;
+    list-style:none;
+  }
+  summary::before{content:"▸ ";color:var(--sub);}
+  details[open] summary::before{content:"▾ ";}
+  details .body{margin-top:12px;font-size:13px;}
+  pre.prompt{
+    white-space:pre-wrap;font-family:inherit;font-size:12.5px;line-height:1.9;
+    border-left:3px solid var(--line);padding:4px 0 4px 16px;margin:12px 0;
+    color:var(--ink);
+  }
+
+  /* ---------- フッター ---------- */
+  footer{margin-top:72px;border-top:1px solid var(--ink);padding-top:20px;font-size:12.5px;color:var(--sub);}
+  footer .rule{padding-left:16px;text-indent:-16px;margin:6px 0;}
+  footer .rule b{color:var(--ink);}
+  footer .note{margin-top:18px;font-size:11.5px;line-height:1.9;}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important;}
+    html{scroll-behavior:auto;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <noscript style="display:block;border-left:3px solid #9A6A1F;padding:8px 0 8px 16px;margin-bottom:36px;font-size:13px;line-height:1.9;">本ツールはJavaScriptで動作する。ファイルアプリのプレビュー（クイックルック）やiCloud.comの閲覧画面ではスクリプトが実行されず、選択肢・マトリクス・検証率が表示されない。SafariやChrome等のブラウザ本体、またはJS実行可能なビューアで開くこと。</noscript>
+
+  <header>
+    <p class="eyebrow">RN LEGAL TRIAGE — 擬律の入口</p>
+    <h1>放射線・核物質 規制経路ナビゲーター</h1>
+    <p class="lede">物質と行為を選ぶと、関係し得る法令・委任経路（法律→政令→省令→告示）・値の在処・除外理由を一望し、主管省庁への照会に耐える整理メモを生成する。結論を出す道具ではなく、問いを完成させる道具。</p>
+    <dl class="meta">
+      <div><dt>版</dt><dd id="mVer"></dd></div>
+      <div><dt>データ基準日</dt><dd id="mDate"></dd></div>
+      <div><dt>検証状況</dt><dd id="mVerify"></dd><div class="vbar"><i id="mBar" style="width:0%"></i></div></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2><span class="num">①</span>物質区分を選ぶ</h2>
+    <p class="h2sub">事案の中心にある「もの」。判断に迷う場合は近い区分を仮置きし、メモの確認事項で拾う。</p>
+    <div class="chips" id="subChips" role="group" aria-label="物質区分"></div>
+  </section>
+
+  <section>
+    <h2><span class="num">②</span>行為を選ぶ</h2>
+    <p class="h2sub">規制は「もの」ではなく「もの×行為」に掛かる。同一物質でも行為が変われば経路が変わる。</p>
+    <div class="chips" id="actChips" role="group" aria-label="行為"></div>
+  </section>
+
+  <section>
+    <h2><span class="num">③</span>関係法令と委任経路</h2>
+    <p class="h2sub">業規制（もの×行為）、性状・形態（化学形・物性・用途）、横断（主体・状況）の三層で全体像を示す。</p>
+    <div id="resultArea"><p class="placeholder">①と②を選択すると、ここに擬律の全体像が表示される。</p></div>
+  </section>
+
+  <section>
+    <h2><span class="num">④</span>俯瞰マトリクス — 全体像の確認</h2>
+    <p class="h2sub">「見落としはないか」に構造で答えるための一覧。セルを押すと①②に反映される。</p>
+    <div class="tableWrap" id="matrixArea"></div>
+    <p class="legend">凡例：炉＝原子炉等規制法／RI＝RI規制法／拡＝拡張予定（外為法系・第2期）。濃淡＝該当法令数。横断4法（電離則・原災法・災対法・処罰法）と性状4法（毒劇法・消防法・高圧ガス保安法・薬機法系）は並行確認レイヤーのため表からは省略。</p>
+  </section>
+
+  <section>
+    <h2><span class="num">⑤</span>照会メモの生成</h2>
+    <p class="h2sub">現在の選択内容から、報告・省庁照会の下敷きになるテキストを組み立てる。コピーしてメール・Word へ。</p>
+    <div class="btnrow">
+      <button class="btn" id="btnMemo">メモを生成する</button>
+      <button class="btn ghost" id="btnCopyMemo">コピー</button>
+      <span class="copied" id="memoCopied"></span>
+    </div>
+    <textarea id="memoOut" aria-label="照会メモ" placeholder="①②を選択のうえ「メモを生成する」を押す。"></textarea>
+  </section>
+
+  <details>
+    <summary>NotebookLM 連携 — 内容照会用の固定プロンプト</summary>
+    <div class="body">
+      <p>本ツールは「地図」（どの法のどの経路を見るか）を担い、条文の中身は NotebookLM 知識ベースが担う。以下を質問の冒頭に貼ると、回答が常に委任経路つきで返る。</p>
+      <pre class="prompt" id="nlmPrompt">以下の質問に回答する際は、必ず次の形式に従うこと。
+1) 結論（1〜2文）
+2) 根拠経路：法律（法令名・条番号）→ 政令 → 省令 → 告示 の順に、実際に辿った委任の経路を明示する
+3) 数値・閾値は値の暗記に頼らず、原文の所在（告示名・別表番号）を示す
+4) 収載ソースに記載がない事項は「ソースに記載なし」と明示する
+
+質問：</pre>
+      <div class="btnrow">
+        <button class="btn ghost" id="btnCopyNlm">プロンプトをコピー</button>
+        <span class="copied" id="nlmCopied"></span>
+      </div>
+    </div>
+  </details>
+
+  <details>
+    <summary>データの検証・更新方法（保守担当者向け）</summary>
+    <div class="body">
+      <p>本ファイルをメモ帳等で開き、<b>LAWDATA</b> 内の該当項目を編集して保存する。</p>
+      <p style="margin-top:10px;">検証手順：各項目を NotebookLM＋e-Gov 原文で照合し、正しければ <b>status を「検証済み」</b>に、<b>confirmed に確認日</b>（例 2026-07-15）を記入する。条番号の誤りは ref を修正のうえ検証済みとする。ヘッダーの検証率は自動計算される。</p>
+      <p style="margin-top:10px;">四半期点検：e-Gov で6法の改正履歴を確認し、影響セルの status を「未検証」へ戻す。基準日（META.dataDate）を更新する。</p>
+    </div>
+  </details>
+
+  <footer>
+    <p class="rule"><b>【運用ルール】</b></p>
+    <p class="rule">一　データ基準日をヘッダーに明記し、基準日不明の状態で運用しない。</p>
+    <p class="rule">二　四半期ごとに e-Gov で改正履歴を確認し、台帳に記録する。</p>
+    <p class="rule">三　本ツールは平時の整理・研鑽・照会準備用とし、有事の一次判断根拠としない。該非の最終判断は主管省庁への確認と原文照合による。</p>
+    <p class="note">初期データは AI による下書きであり、全項目「未検証」から出発する。検証済み表示は、担当者が原文照合を完了した項目のみに付される。v0.2で性状・形態レイヤー4法を追加した。<br>設計準拠：デジタル庁「ダッシュボードデザインの実践ガイドブック」／文字：BIZ UDゴシック（Windows 標準）／依存ライブラリなし・オフライン動作。</p>
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================
+   LAWDATA — 法令マッピングデータ（ここを編集して保守する）
+   ------------------------------------------------------------
+   status    : "未検証" ｜ "検証済み"
+   confirmed : 原文照合を完了した日付（例 "2026-07-15"）
+   kind      : "該当" ｜ "条件付き" ｜ "拡張予定"
+   path      : 委任経路。tier は 法律／政令／省令／告示
+   ref に「（要確認）」とある箇所は条番号自体を照合すること。
+   ============================================================ */
+const META = { version: "v0.2（性状レイヤー追加）", dataDate: "2026-07-05" };
+
+const SUBSTANCES = [
+  { id:"ri",      label:"放射性同位元素",        note:"下限数量・濃度超" },
+  { id:"kiki",    label:"表示付認証機器等",      note:"RI装備機器" },
+  { id:"kaku",    label:"核燃料物質",            note:"特定核燃料物質を除く" },
+  { id:"tokutei", label:"特定核燃料物質",        note:"Pu・濃縮ウラン等" },
+  { id:"genryo",  label:"核原料物質",            note:"ウラン鉱石等" },
+  { id:"osen",    label:"放射性汚染物・廃棄物",  note:"" },
+];
+
+const ACTS = [
+  { id:"use",    label:"使用・取扱い" },
+  { id:"store",  label:"貯蔵・保管" },
+  { id:"carry",  label:"運搬" },
+  { id:"trans",  label:"譲渡し・譲受け・所持" },
+  { id:"waste",  label:"廃棄" },
+  { id:"export", label:"輸出入", future:true },
+  { id:"emg",    label:"事故・盗取・緊急時" },
+];
+
+/* 略称（マトリクス表示用） */
+const ABBR = { "原子炉等規制法":"炉", "RI規制法":"RI", "外為法系":"拡" };
+
+const U = { status:"未検証", confirmed:"" };
+const EXPORT_ENTRY = (memo) => ({
+  law:"外為法系", kind:"拡張予定",
+  articles:"外為法第48条ほか（第2期で整備）",
+  path:[{tier:"法律",ref:"外為法 48条"},{tier:"政令",ref:"輸出貿易管理令 別表"},{tier:"告示",ref:"該当項は要調査"}],
+  threshold:"リスト規制・キャッチオール規制の該非判断（CISTEC様式が実務標準）",
+  memo: memo || "輸出入は現行KBの対象外。第2期（外為法・関税法KB）で本欄を差し替える。",
+  ...U
+});
+
+const LAWDATA = {
+
+/* ---------------- 放射性同位元素 ---------------- */
+"ri|use": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"第3条（許可使用）／第3条の2（届出使用）",
+    path:[{tier:"法律",ref:"RI規制法 3条・3条の2"},{tier:"政令",ref:"施行令"},{tier:"告示",ref:"数量告示（平12 科技庁告示5号）別表"}],
+    threshold:"下限数量・濃度＝数量告示 別表",
+    memo:"密封・非密封の別と数量帯で、許可／届出が分岐する。", ...U }],
+  excluded:[{law:"原子炉等規制法", reason:"核燃料物質・核原料物質に非該当のため。"}]
+},
+"ri|store": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"貯蔵施設・貯蔵能力の基準（条番号要確認）",
+    path:[{tier:"法律",ref:"RI規制法（施設基準の委任）"},{tier:"省令",ref:"施行規則（貯蔵施設基準）"}],
+    threshold:"貯蔵能力の上限・構造基準＝施行規則",
+    memo:"貯蔵箱・保管庫の基準適合と貯蔵能力超過の有無が論点。", ...U }],
+  excluded:[]
+},
+"ri|carry": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"運搬の基準（事業所内／事業所外で系統が分かれる）",
+    path:[{tier:"法律",ref:"RI規制法（運搬基準の委任）"},{tier:"省令",ref:"施行規則／RI等車両運搬規則（国交省令）"},{tier:"告示",ref:"運搬細目告示"}],
+    threshold:"輸送物区分（L型・A型・BM型・BU型）の基準＝告示",
+    memo:"陸上運搬の実務は国交省系省令が中心。区分判定が入口。", ...U }],
+  excluded:[]
+},
+"ri|trans": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"譲渡し・譲受け・所持の制限（条番号要確認）",
+    path:[{tier:"法律",ref:"RI規制法（譲渡・所持の制限規定）"}],
+    threshold:"—",
+    memo:"許可届出使用者等の間でのみ授受可、が原則構造。", ...U }],
+  excluded:[]
+},
+"ri|waste": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"廃棄の基準・廃棄業の許可（条番号要確認）",
+    path:[{tier:"法律",ref:"RI規制法（廃棄基準の委任）"},{tier:"省令",ref:"施行規則（廃棄の基準）"}],
+    threshold:"排気・排水の濃度限度＝施行規則・告示",
+    memo:"許可廃棄業者への委託が実務標準。自ら廃棄は基準適合が前提。", ...U }],
+  excluded:[{law:"廃棄物処理法", reason:"放射性物質・汚染物は明文で適用除外（2条1項）。クリアランス確認後は同法で処理可。"}]
+},
+"ri|export": { entries:[ EXPORT_ENTRY() ], excluded:[] },
+"ri|emg": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"第33条（危険時の措置）／盗取・所在不明時の届出（条番号要確認）",
+    path:[{tier:"法律",ref:"RI規制法 33条ほか"},{tier:"省令",ref:"施行規則（届出手続）"}],
+    threshold:"—",
+    memo:"規制庁への報告と警察への通報を並行させる。時系列記録が重要。", ...U }],
+  excluded:[{law:"原災法", reason:"RI使用者は原子力事業者に非該当が原則＝10条通報の対象外（要確認）。ただし災対法・電離則は横断で適用。"}]
+},
+
+/* ---------------- 表示付認証機器等 ---------------- */
+"kiki|use": {
+  entries:[{ law:"RI規制法", kind:"条件付き",
+    articles:"設計認証・表示付認証機器の特例（第3条の3等・要確認）",
+    path:[{tier:"法律",ref:"RI規制法（認証制度）"},{tier:"省令",ref:"施行規則（認証条件）"}],
+    threshold:"認証条件＝機器ごとの認証内容",
+    memo:"認証条件内の使用か否かで規制水準が変わる。条件逸脱は通常規制へ。", ...U }],
+  excluded:[{law:"原子炉等規制法", reason:"核燃料物質に非該当のため。"}]
+},
+"kiki|store": {
+  entries:[{ law:"RI規制法", kind:"条件付き",
+    articles:"認証条件内での保管（要確認）",
+    path:[{tier:"法律",ref:"RI規制法（認証制度）"}],
+    threshold:"—", memo:"認証条件内であれば簡素化。逸脱時は通常のRI規制で読む。", ...U }],
+  excluded:[]
+},
+"kiki|carry": {
+  entries:[{ law:"RI規制法", kind:"条件付き",
+    articles:"運搬規制の適用関係（要確認）",
+    path:[{tier:"法律",ref:"RI規制法"},{tier:"省令",ref:"運搬関係省令"}],
+    threshold:"輸送物区分の要否＝内蔵線源の数量による（要確認）",
+    memo:"機器一体での移動が典型。L型輸送物該当性が入口論点。", ...U }],
+  excluded:[]
+},
+"kiki|trans": {
+  entries:[{ law:"RI規制法", kind:"条件付き",
+    articles:"販売・賃貸の届出、譲渡制限との関係（要確認）",
+    path:[{tier:"法律",ref:"RI規制法（販売・賃貸届出）"}],
+    threshold:"—", memo:"中古機器の流通・個人間売買が実務上の盲点になりやすい。", ...U }],
+  excluded:[]
+},
+"kiki|waste": {
+  entries:[{ law:"RI規制法", kind:"条件付き",
+    articles:"認証機器の廃棄手続（要確認）",
+    path:[{tier:"法律",ref:"RI規制法（廃棄）"},{tier:"省令",ref:"施行規則"}],
+    threshold:"—", memo:"認証機器でも廃棄は届出・委託ルートあり。放置・不法投棄事案の入口。", ...U }],
+  excluded:[]
+},
+"kiki|export": { entries:[ EXPORT_ENTRY("装備機器の輸出は内蔵核種・数量で該非が分かれる（第2期で整備）。") ], excluded:[] },
+"kiki|emg": {
+  entries:[{ law:"RI規制法", kind:"該当",
+    articles:"紛失・盗取時の届出（条番号要確認）",
+    path:[{tier:"法律",ref:"RI規制法（届出）"},{tier:"省令",ref:"施行規則"}],
+    threshold:"—", memo:"機器ごと所在不明が典型事案。認証機器でも届出対象（要確認）。", ...U }],
+  excluded:[]
+},
+
+/* ---------------- 核燃料物質 ---------------- */
+"kaku|use": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"第52条（使用の許可）",
+    path:[{tier:"法律",ref:"炉規法 52条"},{tier:"政令",ref:"施行令 41条（施設区分）"},{tier:"省令",ref:"使用及び核燃料物質に係る規則"}],
+    threshold:"政令41条該当／非該当で基準の厚さが変わる",
+    memo:"少量でも「使用」は許可制が原則。41条該当性が最初の分岐。", ...U }],
+  excluded:[{law:"RI規制法", reason:"核燃料物質は同法の放射性同位元素から除外されるため。"}]
+},
+"kaku|store": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"貯蔵の基準（省令委任・条番号要確認）",
+    path:[{tier:"法律",ref:"炉規法（貯蔵基準の委任）"},{tier:"省令",ref:"使用者に係る規則"}],
+    threshold:"貯蔵施設の基準＝省令",
+    memo:"臨界安全と保管管理（計量）が並行論点。", ...U }],
+  excluded:[]
+},
+"kaku|carry": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"第59条（運搬の技術基準・確認）",
+    path:[{tier:"法律",ref:"炉規法 59条"},{tier:"省令",ref:"事業所外運搬規則"},{tier:"告示",ref:"運搬細目告示"}],
+    threshold:"核分裂性輸送物・輸送物区分の基準＝省令・告示",
+    memo:"陸上運搬は国交省系規則も並行適用。確認手続の要否を先に判定。", ...U }],
+  excluded:[]
+},
+"kaku|trans": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"譲渡し・譲受けの制限（第61条系・要確認）",
+    path:[{tier:"法律",ref:"炉規法（譲渡制限）"}],
+    threshold:"—",
+    memo:"国際規制物資は計量管理・保障措置（IAEA）が別系統で並走。", ...U }],
+  excluded:[]
+},
+"kaku|waste": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"廃棄の基準／クリアランス制度（第61条の2系・要確認）",
+    path:[{tier:"法律",ref:"炉規法 61条の2系"},{tier:"省令",ref:"クリアランス規則"},{tier:"告示",ref:"クリアランスレベル告示"}],
+    threshold:"クリアランスレベル＝省令・告示",
+    memo:"「もはや規制対象か」の出口判定。測定・確認手続が中核。", ...U }],
+  excluded:[{law:"廃棄物処理法", reason:"明文除外（2条1項）。クリアランスレベル未満の確認を経て初めて同法の廃棄物になる。"}]
+},
+"kaku|export": { entries:[ EXPORT_ENTRY("核燃料物質は輸出令別表第1の2項（原子力関連）該当が原則（第2期で整備）。") ], excluded:[] },
+"kaku|emg": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"第64条（危険時の措置）",
+    path:[{tier:"法律",ref:"炉規法 64条"},{tier:"省令",ref:"報告関係省令"}],
+    threshold:"—",
+    memo:"応急措置義務と報告義務。原災法トリガー（横断参照）と同時に走る。", ...U }],
+  excluded:[]
+},
+
+/* ---------------- 特定核燃料物質 ---------------- */
+"tokutei|use": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"第52条（使用許可）＋核物質防護規定（要確認）",
+    path:[{tier:"法律",ref:"炉規法 52条・防護関係規定"},{tier:"政令",ref:"施行令（防護対象の区分）"},{tier:"省令",ref:"防護措置関係省令"}],
+    threshold:"防護区分（区分Ⅰ〜Ⅲ）＝政令・省令（要確認）",
+    memo:"使用規制に核物質防護（PP）が上乗せ。情報管理も防護の一部。", ...U }],
+  excluded:[{law:"RI規制法", reason:"核燃料物質のため適用除外。"}]
+},
+"tokutei|store": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"貯蔵基準＋貯蔵中の防護措置（要確認）",
+    path:[{tier:"法律",ref:"炉規法"},{tier:"省令",ref:"防護措置関係省令"}],
+    threshold:"防護区分に応じた措置＝省令",
+    memo:"障壁・出入管理・見張り等、区分に応じた防護要件。", ...U }],
+  excluded:[]
+},
+"tokutei|carry": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"第59条系＋運搬中の防護措置・届出（要確認）",
+    path:[{tier:"法律",ref:"炉規法 59条・防護規定"},{tier:"省令",ref:"事業所外運搬規則・防護省令"},{tier:"告示",ref:"細目告示"}],
+    threshold:"防護区分・輸送物区分の双方で判定",
+    memo:"公安委員会への届出系統あり（要確認）。運搬経路情報は要秘匿。", ...U }],
+  excluded:[]
+},
+"tokutei|trans": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"譲渡制限＋計量管理・保障措置（要確認）",
+    path:[{tier:"法律",ref:"炉規法（国際規制物資）"},{tier:"省令",ref:"計量管理規則"}],
+    threshold:"—",
+    memo:"NPT・IAEA保障措置の国内担保。在庫変動報告が伴う。", ...U }],
+  excluded:[]
+},
+"tokutei|waste": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"廃棄基準（防護解除の可否含む・要確認）",
+    path:[{tier:"法律",ref:"炉規法"},{tier:"省令",ref:"廃棄・防護関係省令"}],
+    threshold:"—", memo:"廃棄段階でも防護・計量管理の解除条件を確認。", ...U }],
+  excluded:[]
+},
+"tokutei|export": { entries:[ EXPORT_ENTRY("輸出令別表第1の2項＋NSGガイドライン対応。政府間確認が絡む（第2期で整備）。") ], excluded:[] },
+"tokutei|emg": {
+  entries:[{ law:"原子炉等規制法", kind:"該当",
+    articles:"第64条＋防護上の事象報告（要確認）",
+    path:[{tier:"法律",ref:"炉規法 64条・防護規定"},{tier:"省令",ref:"報告関係省令"}],
+    threshold:"—",
+    memo:"盗取・妨害破壊行為は処罰法・治安系対応が前面（横断参照）。", ...U }],
+  excluded:[]
+},
+
+/* ---------------- 核原料物質 ---------------- */
+"genryo|use": {
+  entries:[{ law:"原子炉等規制法", kind:"条件付き",
+    articles:"使用の届出制（条番号要確認）",
+    path:[{tier:"法律",ref:"炉規法（核原料物質の使用届出）"},{tier:"政令",ref:"施行令（届出対象の数量・濃度）"},{tier:"告示",ref:"関係告示（要確認）"}],
+    threshold:"届出を要する数量・濃度＝政令・告示（要確認）",
+    memo:"ウラン鉱石・トリウム含有物が典型。数量下限未満は届出不要の構造。", ...U }],
+  excluded:[{law:"RI規制法", reason:"核原料物質は適用除外。"}]
+},
+"genryo|store": {
+  entries:[{ law:"原子炉等規制法", kind:"条件付き",
+    articles:"届出使用に付随する保管（要確認）",
+    path:[{tier:"法律",ref:"炉規法"}],
+    threshold:"—", memo:"届出対象性（数量・濃度）の判定が先。", ...U }],
+  excluded:[]
+},
+"genryo|carry": {
+  entries:[{ law:"原子炉等規制法", kind:"条件付き",
+    articles:"運搬基準の適用関係（要確認）",
+    path:[{tier:"法律",ref:"炉規法"},{tier:"省令",ref:"運搬関係規則"}],
+    threshold:"低比放射性物質（LSA）としての区分＝告示（要確認）",
+    memo:"鉱石・原料の大量輸送はLSA区分の当てはめが入口。", ...U }],
+  excluded:[]
+},
+"genryo|trans": {
+  entries:[{ law:"原子炉等規制法", kind:"条件付き",
+    articles:"譲渡・譲受の規制の有無（要確認）",
+    path:[{tier:"法律",ref:"炉規法"}],
+    threshold:"—", memo:"核燃料物質より規制は薄いが、無規制ではない点に注意。", ...U }],
+  excluded:[]
+},
+"genryo|waste": {
+  entries:[{ law:"原子炉等規制法", kind:"条件付き",
+    articles:"廃棄の扱い（要確認）",
+    path:[{tier:"法律",ref:"炉規法"}],
+    threshold:"—", memo:"鉱さい等はクリアランス制度の外の論点あり（要確認）。", ...U }],
+  excluded:[]
+},
+"genryo|export": { entries:[ EXPORT_ENTRY("原料物質の2項該当性・キャッチオールの双方を確認（第2期で整備）。") ], excluded:[] },
+"genryo|emg": {
+  entries:[{ law:"原子炉等規制法", kind:"条件付き",
+    articles:"危険時の措置の適用範囲（要確認）",
+    path:[{tier:"法律",ref:"炉規法"}],
+    threshold:"—", memo:"数量次第で炉規法上の措置対象外もあり得る。災対法・電離則で補う。", ...U }],
+  excluded:[]
+},
+
+/* ---------------- 放射性汚染物・廃棄物 ---------------- */
+"osen|use": {
+  entries:[{ law:"RI規制法／原子炉等規制法", kind:"条件付き",
+    articles:"発生元の法体系に従属（汚染物の取扱規定で読む）",
+    path:[{tier:"法律",ref:"発生元がRIか核燃料物質かで分岐"}],
+    threshold:"—",
+    memo:"「使用」概念には乗りにくい。取扱いは保管・廃棄規定で構成する。", ...U }],
+  excluded:[]
+},
+"osen|store": {
+  entries:[{ law:"RI規制法／原子炉等規制法", kind:"該当",
+    articles:"保管廃棄の基準（各法の省令・条番号要確認）",
+    path:[{tier:"法律",ref:"各法（保管廃棄の委任）"},{tier:"省令",ref:"各施行規則"}],
+    threshold:"保管廃棄設備の基準＝省令",
+    memo:"発生元の法体系を先に確定させる。混在事案は両にらみ。", ...U }],
+  excluded:[]
+},
+"osen|carry": {
+  entries:[{ law:"RI規制法／原子炉等規制法", kind:"該当",
+    articles:"廃棄物運搬も輸送物区分の対象（要確認）",
+    path:[{tier:"法律",ref:"各法"},{tier:"省令",ref:"運搬関係規則"},{tier:"告示",ref:"細目告示"}],
+    threshold:"輸送物区分・表面線量率等＝告示",
+    memo:"「廃棄物だから緩い」ではない。区分判定は通常物と同枠。", ...U }],
+  excluded:[]
+},
+"osen|trans": {
+  entries:[{ law:"RI規制法／原子炉等規制法", kind:"条件付き",
+    articles:"廃棄委託に伴う引渡し（要確認）",
+    path:[{tier:"法律",ref:"各法（委託規定）"}],
+    threshold:"—", memo:"委託契約と引渡記録の整備が実務の中心。", ...U }],
+  excluded:[]
+},
+"osen|waste": {
+  entries:[{ law:"RI規制法／原子炉等規制法", kind:"該当",
+    articles:"埋設・クリアランス（両法に制度あり・条番号要確認）",
+    path:[{tier:"法律",ref:"各法（埋設・クリアランス）"},{tier:"省令",ref:"クリアランス規則"},{tier:"告示",ref:"レベル告示"}],
+    threshold:"クリアランスレベル＝省令・告示",
+    memo:"発生元がRIか核燃料物質かで所管法・手続が分かれる。", ...U }],
+  excluded:[{law:"廃棄物処理法", reason:"明文除外（2条1項）。事故由来は汚染対処特措法。規制下限未満の物（例：ラドン温泉器）は法の谷間になり得る（要確認）。"}]
+},
+"osen|export": { entries:[ EXPORT_ENTRY("放射性廃棄物の輸出入は別途の規制枠組みあり（要調査・第2期）。") ], excluded:[] },
+"osen|emg": {
+  entries:[{ law:"RI規制法／原子炉等規制法", kind:"該当",
+    articles:"漏えい・汚染拡大時の措置（各法・条番号要確認）",
+    path:[{tier:"法律",ref:"各法（危険時の措置）"}],
+    threshold:"—", memo:"汚染範囲の確定と拡大防止が先行。届出は並行で。", ...U }],
+  excluded:[]
+},
+
+};
+
+/* ---------------- 性状・形態レイヤー（4法）＋横断レイヤー（4法） ----------------
+   layer:"attr" ＝ 化学形・物性・用途で掛かる並行規制
+   layer:"situ" ＝ 主体・状況で掛かる並行規制                     */
+const CROSS = [
+  { law:"毒物及び劇物取締法", layer:"attr",
+    trigger:"化学形態が毒物・劇物に該当する場合。可溶性ウラン化合物（硝酸ウラニル・酢酸ウラニル・六フッ化ウラン等）は指定令の劇物。",
+    path:[{tier:"法律",ref:"毒劇法 別表第2 94号"},{tier:"政令",ref:"毒物及び劇物指定令 2条（可溶性ウラン化合物）"}],
+    articles:"盗難等防止（11条）／表示（12条）／譲渡手続（14条）／交付制限（15条）／廃棄（15条の2）",
+    memo:"放射線規制と完全並走。非届出の業務上取扱者にも義務が及ぶ（要確認）。",
+    match:(s,a)=>["kaku","tokutei","genryo","ri","osen"].includes(s), ...U },
+  { law:"消防法（危険物）", layer:"attr",
+    trigger:"性状が別表第1の危険物に該当する場合。硝酸ウラニル＝第1類・硝酸塩類、金属ウラン粉＝金属粉系、有機シンチレータ廃液＝第4類。",
+    path:[{tier:"法律",ref:"消防法 2条7項・別表第1"},{tier:"政令",ref:"危険物の規制に関する政令（指定数量 別表第3）"},{tier:"条例",ref:"少量危険物＝市町村火災予防条例"}],
+    articles:"指定数量以上の貯蔵・取扱いは許可施設（10条）。該当性は確認試験で判定",
+    memo:"放射能でなく性状で掛かる。指定数量未満は条例側の規制。",
+    match:(s,a)=>["kaku","tokutei","genryo","ri","osen"].includes(s), ...U },
+  { law:"高圧ガス保安法", layer:"attr",
+    trigger:"気体RI（クリプトン85・トリチウム等）を圧縮・液化して容器に充填する場合。",
+    path:[{tier:"法律",ref:"高圧ガス保安法 2条（定義）"},{tier:"政令",ref:"施行令（適用除外：炉規法施設内等・要確認）"},{tier:"省令",ref:"一般高圧ガス保安規則・容器保安規則"}],
+    articles:"貯蔵・移動・容器検査等。一般則の不活性ガス定義はクリプトン・キセノン・ラドンを含む",
+    memo:"放射能でなく圧力で掛かる。炉規法施設内部は政令除外（要確認）。",
+    match:(s,a)=>s==="ri", ...U },
+  { law:"薬機法・医療法体系", layer:"attr",
+    trigger:"対象が放射性医薬品・診療用RI等の場合。RI規制法は医薬品等を適用除外し、規制体系ごと切り替わる（要確認）。",
+    path:[{tier:"法律",ref:"薬機法／医療法"},{tier:"省令",ref:"医療法施行規則（診療用放射性同位元素）"},{tier:"告示",ref:"放射性医薬品基準"}],
+    articles:"病院・診療所内の使用・保管・廃棄は医療法施行規則の放射線関係規定で読む",
+    memo:"病院発の紛失・盗取は所管・根拠法が異なる。入口で振り分ける。",
+    match:(s,a)=>["ri","kiki"].includes(s), ...U },
+  { law:"電離放射線障害防止規則", layer:"situ",
+    trigger:"労働者が放射線業務に従事する場合、物質区分を問わず常に適用。",
+    path:[{tier:"法律",ref:"労働安全衛生法 22条"},{tier:"省令",ref:"電離則"}],
+    articles:"管理区域（3条）／線量限度／緊急作業（7条）／事故時の退避（42条）",
+    memo:"事業規制と別系統の「人の防護」。抜けやすいので常時表示。",
+    match:()=>true, ...U },
+  { law:"原子力災害対策特別措置法", layer:"situ",
+    trigger:"原子力事業者の施設・事業所外運搬で特定事象が発生した場合。",
+    path:[{tier:"法律",ref:"原災法 10条・15条"},{tier:"省令",ref:"EAL関係規則"}],
+    articles:"10条通報／15条 原子力緊急事態宣言（EAL＝規則委任）",
+    memo:"主体が「原子力事業者」か否かが入口。RI使用者は原則対象外（要確認）。",
+    match:(s,a)=> a==="emg" || (a==="carry" && (s==="kaku"||s==="tokutei")), ...U },
+  { law:"災害対策基本法", layer:"situ",
+    trigger:"地域の災害対応として避難指示等が必要な場合（原災法は本法の特別法）。",
+    path:[{tier:"法律",ref:"災対法 60条ほか"}],
+    articles:"避難指示（60条）／警戒区域設定 等",
+    memo:"一般災害法制。原災法の外側で自治体対応を支える枠。",
+    match:(s,a)=> a==="emg", ...U },
+  { law:"放射線発散処罰法", layer:"situ",
+    trigger:"故意による発散・汚染等、犯罪性が疑われる事案。",
+    path:[{tier:"法律",ref:"放射線発散処罰法（条番号要確認）"}],
+    articles:"発散罪・未遂／予備（核テロ防止条約の国内担保法）",
+    memo:"規制法制と刑事法制の接続点。捜査系統との情報連携が前提。",
+    match:(s,a)=> a==="emg", ...U },
+];
+
+/* ============================================================
+   以下ロジック（通常は編集不要）
+   ============================================================ */
+let sel = { sub:null, act:null };
+
+const $ = (id)=>document.getElementById(id);
+const esc = (s)=>String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* --- 検証率 --- */
+function verifyStats(){
+  let total=0, ok=0;
+  Object.values(LAWDATA).forEach(cell=>cell.entries.forEach(e=>{ total++; if(e.status==="検証済み") ok++; }));
+  CROSS.forEach(e=>{ total++; if(e.status==="検証済み") ok++; });
+  return {total, ok, pct: total? Math.round(ok/total*100):0};
+}
+function renderMeta(){
+  $("mVer").textContent = META.version;
+  $("mDate").textContent = META.dataDate;
+  const v = verifyStats();
+  $("mVerify").textContent = `検証済み ${v.ok} / ${v.total} 項目（${v.pct}%）`;
+  $("mBar").style.width = v.pct + "%";
+}
+
+/* --- チップ --- */
+function renderChips(){
+  $("subChips").innerHTML = SUBSTANCES.map(s=>
+    `<button class="chip" data-sub="${s.id}" aria-pressed="false">${esc(s.label)}${s.note?`<small>${esc(s.note)}</small>`:""}</button>`).join("");
+  $("actChips").innerHTML = ACTS.map(a=>
+    `<button class="chip" data-act="${a.id}" aria-pressed="false">${esc(a.label)}${a.future?`<small>第2期対象</small>`:""}</button>`).join("");
+  document.querySelectorAll("[data-sub]").forEach(b=>b.addEventListener("click",()=>{ sel.sub=b.dataset.sub; sync(); }));
+  document.querySelectorAll("[data-act]").forEach(b=>b.addEventListener("click",()=>{ sel.act=b.dataset.act; sync(); }));
+}
+function syncChips(){
+  document.querySelectorAll("[data-sub]").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.sub===sel.sub)));
+  document.querySelectorAll("[data-act]").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.act===sel.act)));
+}
+
+/* --- 部品 --- */
+function pathHTML(path){
+  return `<div class="path">` + path.map((p,i)=>
+    `${i? `<span class="parrow">→</span>`:""}<span class="pnode"><span class="ptier">${esc(p.tier)}</span><span class="pref">${esc(p.ref)}</span></span>`
+  ).join("") + `</div>`;
+}
+function statusHTML(e){
+  return e.status==="検証済み"
+    ? `<span class="status ok">検証済み<span class="d">${esc(e.confirmed||"")}</span></span>`
+    : `<span class="status">未検証 — 原文照合前のAI下書き</span>`;
+}
+function entryHTML(e){
+  const cls = e.kind==="拡張予定" ? "law future" : (e.kind==="条件付き" ? "law cond" : "law");
+  const kindCls = e.kind==="該当" ? "kind hit" : "kind";
+  return `<article class="${cls}">
+    <div class="lawHead"><span class="lawName">${esc(e.law)}</span><span class="${kindCls}">${esc(e.kind)}</span></div>
+    <p class="articles"><b>根拠：</b>${esc(e.articles)}</p>
+    ${pathHTML(e.path)}
+    ${e.threshold && e.threshold!=="—" ? `<p class="kv">値の在処　<b>${esc(e.threshold)}</b></p>`:""}
+    <p class="memo">${esc(e.memo)}</p>
+    ${statusHTML(e)}
+  </article>`;
+}
+function crossHTML(e, active){
+  return `<article class="law ${active?"":"cross-off"}">
+    <div class="lawHead"><span class="lawName">${esc(e.law)}</span><span class="kind">${active?"要確認（点灯）":"待機"}</span></div>
+    <p class="trigger">適用条件：<em>${esc(e.trigger)}</em></p>
+    <p class="articles"><b>要点：</b>${esc(e.articles)}</p>
+    ${pathHTML(e.path)}
+    <p class="memo">${esc(e.memo)}</p>
+    ${statusHTML(e)}
+  </article>`;
+}
+
+/* --- 結果描画 --- */
+function renderResult(){
+  const area = $("resultArea");
+  if(!sel.sub || !sel.act){
+    area.innerHTML = `<p class="placeholder">①と②を選択すると、ここに擬律の全体像が表示される。</p>`;
+    return;
+  }
+  const cell = LAWDATA[`${sel.sub}|${sel.act}`];
+  const s = SUBSTANCES.find(x=>x.id===sel.sub).label;
+  const a = ACTS.find(x=>x.id===sel.act).label;
+  let html = `<p class="layerTitle">選択中：${esc(s)} × ${esc(a)}</p>`;
+  html += `<p class="layerTitle">業規制レイヤー</p>`;
+  html += cell.entries.map(entryHTML).join("");
+  html += `<p class="layerTitle">性状・形態レイヤー — 化学形・物性・用途で並行確認</p>`;
+  html += CROSS.filter(e=>e.layer==="attr").map(e=>crossHTML(e, e.match(sel.sub, sel.act))).join("");
+  html += `<p class="layerTitle">横断レイヤー — 主体・状況で並行確認</p>`;
+  html += CROSS.filter(e=>e.layer==="situ").map(e=>crossHTML(e, e.match(sel.sub, sel.act))).join("");
+  if(cell.excluded && cell.excluded.length){
+    html += `<div class="excl"><h4>非該当と整理した法令（消した理由も擬律の一部）</h4><ul>` +
+      cell.excluded.map(x=>`<li><b>${esc(x.law)}</b>　${esc(x.reason)}</li>`).join("") + `</ul></div>`;
+  }
+  area.innerHTML = html;
+}
+
+/* --- マトリクス --- */
+function renderMatrix(){
+  let html = `<table><thead><tr><th class="rowh">物質区分＼行為</th>`;
+  ACTS.forEach(a=>{ html += `<th>${esc(a.label)}</th>`; });
+  html += `</tr></thead><tbody>`;
+  SUBSTANCES.forEach(su=>{
+    html += `<tr><th class="rowh">${esc(su.label)}</th>`;
+    ACTS.forEach(ac=>{
+      const cell = LAWDATA[`${su.id}|${ac.id}`];
+      const laws = cell ? cell.entries : [];
+      const future = laws.length && laws.every(e=>e.kind==="拡張予定");
+      const abbrs = laws.map(e=>{
+        if(e.kind==="拡張予定") return "拡";
+        return e.law.split("／").map(n=>ABBR[n]||n.slice(0,2)).join("・");
+      }).join("・");
+      const n = laws.filter(e=>e.kind!=="拡張予定").length;
+      const tint = future ? "tf" : (n>=2 ? "t3" : n===1 ? (laws[0].kind==="条件付き"?"t1":"t2") : "");
+      const selCls = (sel.sub===su.id && sel.act===ac.id) ? " sel" : "";
+      html += `<td class="${tint}${selCls}" data-msub="${su.id}" data-mact="${ac.id}" title="クリックで選択">
+        <span class="abbr">${esc(abbrs||"—")}</span><span class="cnt">${future?"第2期":(laws.length? (laws[0].kind==="条件付き"&&n===1?"条件付き":"該当"):"—")}</span></td>`;
+    });
+    html += `</tr>`;
+  });
+  html += `</tbody></table>`;
+  $("matrixArea").innerHTML = html;
+  document.querySelectorAll("[data-msub]").forEach(td=>td.addEventListener("click",()=>{
+    sel.sub = td.dataset.msub; sel.act = td.dataset.mact; sync();
+    document.querySelector("#resultArea").scrollIntoView({block:"start"});
+  }));
+}
+
+/* --- 照会メモ --- */
+function buildMemo(){
+  if(!sel.sub || !sel.act){ $("memoOut").value = "①物質区分と②行為を選択してから生成する。"; return; }
+  const cell = LAWDATA[`${sel.sub}|${sel.act}`];
+  const s = SUBSTANCES.find(x=>x.id===sel.sub).label;
+  const a = ACTS.find(x=>x.id===sel.act).label;
+  const today = new Date().toISOString().slice(0,10);
+  const line = "────────────────────────";
+  let t = `【擬律整理メモ】\n作成日：${today}　　データ基準日：${META.dataDate}（${META.version}）\n${line}\n`;
+  t += `■ 事案の類型\n　物質区分：${s}　／　行為：${a}\n\n`;
+  t += `■ 関係し得る法令（業規制レイヤー）\n`;
+  cell.entries.forEach(e=>{
+    const p = e.path.map(x=>`${x.tier}:${x.ref}`).join(" → ");
+    t += `　・${e.law}［${e.kind}］\n`;
+    t += `　　根拠：${e.articles}\n`;
+    t += `　　経路：${p}\n`;
+    if(e.threshold && e.threshold!=="—") t += `　　値の在処：${e.threshold}\n`;
+    t += `　　状態：${e.status}${e.confirmed?`（確認日 ${e.confirmed}）`:""}\n`;
+  });
+  t += `\n■ 性状・形態から確認する法令\n`;
+  CROSS.filter(e=>e.layer==="attr").forEach(e=>{
+    const on = e.match(sel.sub, sel.act);
+    t += `　・${e.law}${on?"【要確認】":"（待機）"}\n　　適用条件：${e.trigger}\n`;
+  });
+  t += `\n■ 横断的に確認する法令\n`;
+  CROSS.filter(e=>e.layer==="situ").forEach(e=>{
+    const on = e.match(sel.sub, sel.act);
+    t += `　・${e.law}${on?"【要確認】":"（待機）"}\n　　適用条件：${e.trigger}\n`;
+  });
+  if(cell.excluded && cell.excluded.length){
+    t += `\n■ 非該当と整理した法令（理由）\n`;
+    cell.excluded.forEach(x=>{ t += `　・${x.law}：${x.reason}\n`; });
+  }
+  const unv = cell.entries.filter(e=>e.status!=="検証済み").map(e=>e.law);
+  t += `\n■ 主管省庁への照会に向けた確認事項\n`;
+  t += `　・事実関係：核種／数量・濃度／形態（密封・非密封）／場所／行為の主体\n`;
+  t += `　・条文関係：上記のうち「（要確認）」表記の条番号・告示名の特定\n`;
+  if(unv.length) t += `　・本メモ未検証項目：${[...new Set(unv)].join("、")}（原文照合前）\n`;
+  t += `${line}\n※ 本メモは関係法令の当たりを付けるための整理であり、該非の最終判断は\n　主管省庁への確認および法令原文の照合による。\n`;
+  $("memoOut").value = t;
+}
+
+/* --- コピー --- */
+function copyText(text, msgEl){
+  const done = ()=>{ msgEl.textContent = "コピーした"; setTimeout(()=>msgEl.textContent="", 2200); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallback());
+  } else fallback();
+  function fallback(){
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); done(); }catch(e){ msgEl.textContent = "手動で選択してコピーする"; }
+    document.body.removeChild(ta);
+  }
+}
+
+function sync(){ syncChips(); renderResult(); renderMatrix(); }
+
+/* --- 初期化 --- */
+renderMeta(); renderChips(); renderMatrix(); renderResult();
+$("btnMemo").addEventListener("click", buildMemo);
+$("btnCopyMemo").addEventListener("click", ()=>copyText($("memoOut").value, $("memoCopied")));
+$("btnCopyNlm").addEventListener("click", ()=>copyText($("nlmPrompt").textContent, $("nlmCopied")));
+</script>
+</body>
+</html>
